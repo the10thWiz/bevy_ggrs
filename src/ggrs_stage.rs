@@ -6,6 +6,74 @@ use ggrs::{
 };
 use instant::{Duration, Instant};
 
+#[derive(Resource)]
+pub struct BevyP2PSession<T: Config>(pub P2PSession<T>);
+
+impl<T: Config> std::ops::Deref for BevyP2PSession<T> {
+    type Target = P2PSession<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: Config> std::ops::DerefMut for BevyP2PSession<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[derive(Resource)]
+pub struct BevySpectatorSession<T: Config>(pub SpectatorSession<T>);
+
+impl<T: Config> std::ops::Deref for BevySpectatorSession<T> {
+    type Target = SpectatorSession<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: Config> std::ops::DerefMut for BevySpectatorSession<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[derive(Resource)]
+pub struct BevySyncTestSession<T: Config>(pub SyncTestSession<T>);
+
+impl<T: Config> std::ops::Deref for BevySyncTestSession<T> {
+    type Target = SyncTestSession<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: Config> std::ops::DerefMut for BevySyncTestSession<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[derive(Resource)]
+pub struct PlayerInputs<T: Config>(Vec<(T::Input, InputStatus)>);
+
+impl<T: Config> std::ops::Deref for PlayerInputs<T> {
+    type Target = Vec<(T::Input, InputStatus)>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: Config> std::ops::DerefMut for PlayerInputs<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// The GGRSStage handles updating, saving and loading the game state.
 pub(crate) struct GGRSStage<T>
 where
@@ -43,10 +111,10 @@ impl<T: Config + Send + Sync> Stage for GGRSStage<T> {
         self.last_update = Instant::now();
 
         // no matter what, poll remotes and send responses
-        if let Some(mut sess) = world.get_resource_mut::<P2PSession<T>>() {
+        if let Some(mut sess) = world.get_resource_mut::<BevyP2PSession<T>>() {
             sess.poll_remote_clients();
         }
-        if let Some(mut sess) = world.get_resource_mut::<SpectatorSession<T>>() {
+        if let Some(mut sess) = world.get_resource_mut::<BevySpectatorSession<T>>() {
             sess.poll_remote_clients();
         }
 
@@ -93,7 +161,7 @@ impl<T: Config> GGRSStage<T> {
     }
 
     pub(crate) fn run_synctest(&mut self, world: &mut World) {
-        let sess = world.get_resource::<SyncTestSession<T>>().expect(
+        let sess = world.get_resource::<BevySyncTestSession<T>>().expect(
             "No GGRS SyncTestSession found. Please start a session and add it as a resource.",
         );
 
@@ -111,7 +179,7 @@ impl<T: Config> GGRSStage<T> {
         }
 
         // try to advance the frame
-        let mut sess = world.get_resource_mut::<SyncTestSession<T>>().expect(
+        let mut sess = world.get_resource_mut::<BevySyncTestSession<T>>().expect(
             "No GGRS SyncTestSession found. Please start a session and add it as a resource.",
         );
         for (player_handle, &input) in inputs.iter().enumerate() {
@@ -126,7 +194,7 @@ impl<T: Config> GGRSStage<T> {
 
     pub(crate) fn run_spectator(&mut self, world: &mut World) {
         // run spectator session, no input necessary
-        let mut sess = world.get_resource_mut::<SpectatorSession<T>>().expect(
+        let mut sess = world.get_resource_mut::<BevySpectatorSession<T>>().expect(
             "No GGRS P2PSpectatorSession found. Please start a session and add it as a resource.",
         );
 
@@ -144,7 +212,7 @@ impl<T: Config> GGRSStage<T> {
 
     pub(crate) fn run_p2p(&mut self, world: &mut World) {
         let sess = world
-            .get_resource::<P2PSession<T>>()
+            .get_resource::<BevyP2PSession<T>>()
             .expect("No GGRS P2PSession found. Please start a session and add it as a resource.");
 
         // if our snapshot vector is not initialized, resize it accordingly
@@ -169,7 +237,7 @@ impl<T: Config> GGRSStage<T> {
         }
 
         let mut sess = world
-            .get_resource_mut::<P2PSession<T>>()
+            .get_resource_mut::<BevyP2PSession<T>>()
             .expect("No GGRS P2PSession found. Please start a session and add it as a resource.");
 
         // if session is ready, try to advance the frame
@@ -193,7 +261,9 @@ impl<T: Config> GGRSStage<T> {
             match request {
                 GGRSRequest::SaveGameState { cell, frame } => self.save_world(cell, frame, world),
                 GGRSRequest::LoadGameState { frame, .. } => self.load_world(frame, world),
-                GGRSRequest::AdvanceFrame { inputs } => self.advance_frame(inputs, world),
+                GGRSRequest::AdvanceFrame { inputs } => {
+                    self.advance_frame(PlayerInputs(inputs), world)
+                }
             }
         }
     }
@@ -228,14 +298,10 @@ impl<T: Config> GGRSStage<T> {
         snapshot_to_load.write_to_world(world, &self.type_registry);
     }
 
-    pub(crate) fn advance_frame(
-        &mut self,
-        inputs: Vec<(T::Input, InputStatus)>,
-        world: &mut World,
-    ) {
+    pub(crate) fn advance_frame(&mut self, inputs: PlayerInputs<T>, world: &mut World) {
         world.insert_resource(inputs);
         self.schedule.run_once(world);
-        world.remove_resource::<Vec<(T::Input, InputStatus)>>();
+        world.remove_resource::<PlayerInputs<T>>();
         self.frame += 1;
     }
 

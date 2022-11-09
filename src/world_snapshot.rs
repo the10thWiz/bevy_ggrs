@@ -38,7 +38,7 @@ impl Default for RollbackEntity {
 impl Debug for RollbackEntity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RollbackEntity")
-            .field("id", &self.entity.id())
+            .field("id", &self.entity)
             .field("generation", &self.entity.generation())
             .field("rollback_id", &self.rollback_id)
             .finish()
@@ -61,61 +61,65 @@ impl WorldSnapshot {
         let type_registry = type_registry.read();
 
         // create a `RollbackEntity` for every entity tagged with rollback
-        for archetype in world.archetypes().iter() {
-            let entities_offset = snapshot.entities.len();
-            for entity in archetype.entities() {
-                if let Some(rollback) = world.get::<Rollback>(*entity) {
-                    snapshot.entities.push(RollbackEntity {
-                        entity: *entity,
-                        rollback_id: rollback.id,
-                        components: Vec::new(),
-                    });
-                }
-            }
-
-            // fill the component vectors of rollback entities
-            for component_id in archetype.components() {
-                let reflect_component = world
-                    .components()
-                    .get_info(component_id)
-                    .and_then(|info| type_registry.get(info.type_id().unwrap()))
-                    .and_then(|registration| registration.data::<ReflectComponent>());
-                if let Some(reflect_component) = reflect_component {
-                    for (i, entity) in archetype
-                        .entities()
-                        .iter()
-                        .filter(|&&entity| world.get::<Rollback>(entity).is_some())
-                        .enumerate()
-                    {
-                        if let Some(component) = reflect_component.reflect(world, *entity)
-                        {
-                            assert_eq!(*entity, snapshot.entities[entities_offset + i].entity);
-                            // add the hash value of that component to the shapshot checksum, if that component supports hashing
+        for entity in world.iter_entities() {
+            // let entities_offset = snapshot.entities.len();
+            // for entity in archetype.entities() {
+            if let Some(rollback) = world.get::<Rollback>(entity) {
+                let mut components = vec![];
+                for ty in type_registry.iter() {
+                    if let Some(data) = ty.data::<ReflectComponent>() {
+                        if let Some(component) = data.reflect(world, entity) {
                             if let Some(hash) = component.reflect_hash() {
-                                // wrapping semantics to avoid overflow
                                 snapshot.checksum =
                                     (Wrapping(snapshot.checksum) + Wrapping(hash)).0;
                             }
-                            // add the component to the shapshot
-                            snapshot.entities[entities_offset + i]
-                                .components
-                                .push(component.clone_value());
+                            components.push(component.clone_value());
                         }
                     }
                 }
+                snapshot.entities.push(RollbackEntity {
+                    entity,
+                    rollback_id: rollback.id,
+                    components,
+                });
             }
-        }
+            // TODO: fill component vec
 
-        // go through all resources and clone those that are registered
-        for component_id in world.archetypes().resource().unique_components().indices() {
-            let reflect_component = world
-                .components()
-                .get_info(component_id)
-                .and_then(|info| type_registry.get(info.type_id().unwrap()))
-                .and_then(|registration| registration.data::<ReflectResource>());
-            if let Some(reflect_resource) = reflect_component {
-                if let Some(resource) = reflect_resource.reflect_resource(world) {
-                    // add the hash value of that resource to the shapshot checksum, if that resource supports hashing
+            // // fill the component vectors of rollback entities
+            // for component_id in archetype.components() {
+            //     let reflect_component = world
+            //         .components()
+            //         .get_info(component_id)
+            //         .and_then(|info| type_registry.get(info.type_id().unwrap()))
+            //         .and_then(|registration| registration.data::<ReflectComponent>());
+            //     if let Some(reflect_component) = reflect_component {
+            //         for (i, entity) in archetype
+            //             .entities()
+            //             .iter()
+            //             .filter(|&&entity| world.get::<Rollback>(entity).is_some())
+            //             .enumerate()
+            //         {
+            //             if let Some(component) = reflect_component.reflect(world, *entity) {
+            //                 assert_eq!(*entity, snapshot.entities[entities_offset + i].entity);
+            //                 // add the hash value of that component to the shapshot checksum, if that component supports hashing
+            //                 if let Some(hash) = component.reflect_hash() {
+            //                     // wrapping semantics to avoid overflow
+            //                     snapshot.checksum =
+            //                         (Wrapping(snapshot.checksum) + Wrapping(hash)).0;
+            //                 }
+            //                 // add the component to the shapshot
+            //                 snapshot.entities[entities_offset + i]
+            //                     .components
+            //                     .push(component.clone_value());
+            //             }
+            //         }
+            //     }
+            // }
+        }
+        // if let Some() = world.get_resource_by_id(component_id)
+        for ty in type_registry.iter() {
+            if let Some(res) = ty.data::<ReflectResource>() {
+                if let Some(resource) = res.reflect_resource(world) {
                     if let Some(hash) = resource.reflect_hash() {
                         snapshot.checksum = (Wrapping(snapshot.checksum) + Wrapping(hash)).0;
                     }
@@ -139,7 +143,7 @@ impl WorldSnapshot {
                 .entry(rollback_entity.rollback_id)
                 .or_insert_with(|| {
                     world
-                        .spawn()
+                        .spawn_empty()
                         .insert(Rollback {
                             id: rollback_entity.rollback_id,
                         })
@@ -161,9 +165,7 @@ impl WorldSnapshot {
                         .find(|comp| comp.type_name() == registration.type_name())
                     {
                         // if we have data saved in the snapshot, overwrite the world
-                        Some(component) => {
-                            reflect_component.apply(world, entity, &**component)
-                        }
+                        Some(component) => reflect_component.apply(world, entity, &**component),
                         // if we don't have any data saved, we need to remove that component from the entity
                         None => reflect_component.remove(world, entity),
                     }

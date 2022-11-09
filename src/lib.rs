@@ -7,19 +7,22 @@ use bevy::{
 };
 use ggrs::{Config, PlayerHandle};
 use ggrs_stage::GGRSStage;
+use parking_lot::RwLock;
 use reflect_resource::ReflectResource;
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 pub(crate) mod ggrs_stage;
 pub(crate) mod reflect_resource;
 pub(crate) mod world_snapshot;
+
+pub use ggrs_stage::{BevyP2PSession, BevySpectatorSession, BevySyncTestSession, PlayerInputs};
 
 /// Stage label for the Custom GGRS Stage.
 pub const GGRS_UPDATE: &str = "ggrs_update";
 const DEFAULT_FPS: usize = 60;
 
 /// Defines the Session that the GGRS Plugin should expect as a resource.
+#[derive(Resource)]
 pub enum SessionType {
     SyncTestSession,
     P2PSession,
@@ -53,7 +56,7 @@ impl Rollback {
 
 /// Provides unique ids for your Rollback components.
 /// When you add the GGRS Plugin, this should be available as a resource.
-#[derive(Default)]
+#[derive(Default, Resource)]
 pub struct RollbackIdProvider {
     next_id: u32,
 }
@@ -114,9 +117,23 @@ impl<T: Config + Send + Sync> GGRSPlugin<T> {
     }
 
     /// Registers a type of component for saving and loading during rollbacks.
-    pub fn register_rollback_type<Type>(self) -> Self
+    pub fn register_rollback_component<Type>(self) -> Self
     where
         Type: GetTypeRegistration + Reflect + Default + Component,
+    {
+        let mut registry = self.type_registry.write();
+        registry.register::<Type>();
+
+        let registration = registry.get_mut(std::any::TypeId::of::<Type>()).unwrap();
+        registration.insert(<ReflectComponent as FromType<Type>>::from_type());
+        drop(registry);
+        self
+    }
+
+    /// Registers a type of resource for saving and loading during rollbacks.
+    pub fn register_rollback_resource<Type>(self) -> Self
+    where
+        Type: GetTypeRegistration + Reflect + Default + Component + Resource,
     {
         let mut registry = self.type_registry.write();
         registry.register::<Type>();

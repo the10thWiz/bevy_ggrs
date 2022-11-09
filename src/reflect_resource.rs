@@ -36,7 +36,7 @@ impl ReflectResource {
     }
 }
 
-impl<C: Component + Reflect + FromWorld> FromType<C> for ReflectResource {
+impl<C: Component + Reflect + FromWorld + Resource> FromType<C> for ReflectResource {
     fn from_type() -> Self {
         ReflectResource {
             add_resource: |world, reflected_resource| {
